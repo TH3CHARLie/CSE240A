@@ -33,7 +33,12 @@ int verbose;
 //      Predictor Data Structures     //
 //------------------------------------//
 
-// TODO(shiyang): Gshare Data structures
+// Gshare Data structures
+uint32_t gshare_history_register;
+uint32_t* gshare_history_table;
+uint32_t gshare_mask;
+int gshare_size;
+
 
 // TODO(xuanda): Tournament Data structures
 
@@ -50,7 +55,14 @@ int verbose;
 //------------------------------------//
 
 void init_gshare_predictor() {
-
+  gshare_size = 1 << ghistoryBits;
+  gshare_mask = gshare_size - 1;
+  gshare_history_register = 0;
+  gshare_history_table = (uint32_t *)malloc(sizeof(uint32_t) * gshare_size);
+  for (size_t i = 0; i < gshare_size; ++i) {
+    // All 2-bit predictors should be initialized to WN (Weakly Not Taken).
+    gshare_history_table[i] = WN;
+  }
 }
 
 
@@ -71,12 +83,15 @@ void init_predictor() {
       return;
     case GSHARE:
       init_gshare_predictor();
+      return;
     case TOURNAMENT:
       init_tournament_predictor();
+      return;
     case CUSTOM:
       init_custom_predictor();
+      return;
     default:
-      break;
+      return;
   }
 }
 
@@ -84,9 +99,15 @@ void init_predictor() {
 //        Prediction Functions        //
 //------------------------------------//
 
-// TODO(shiyang):
 uint8_t make_prediction_gshare(uint32_t pc) {
-  return NOTTAKEN;
+  uint32_t i = (pc ^ gshare_history_register) & gshare_mask;
+  uint32_t pattern = gshare_history_table[i];
+  return pattern >> 1;
+  // if (pattern >= WT) {
+  //   return TAKEN;
+  // } else {
+  //   return NOTTAKEN;
+  // }
 }
 
 // TODO(xuanda):
@@ -127,9 +148,19 @@ uint8_t make_prediction(uint32_t pc) {
 //        Predictor Functions         //
 //------------------------------------//
 
-// TODO(shiyang):
 void train_predictor_gshare(uint32_t pc, uint8_t outcome) {
-
+  uint32_t i = (pc ^ gshare_history_register) & gshare_mask;
+  uint32_t pattern = gshare_history_table[i];
+  if (outcome == TAKEN) {
+    if (pattern != ST) {
+      gshare_history_table[i]++;
+    }
+  } else {
+    if (pattern != SN) {
+      gshare_history_table[i]--;
+    }
+  }
+  gshare_history_register = (gshare_history_register << 1 | outcome) & gshare_mask;
 }
 
 // TODO(xuanda):
