@@ -102,7 +102,7 @@ void init_tournament_predictor() {
   }
   tournament_choice_history_table = (uint32_t *)malloc(sizeof(uint32_t) * tournment_global_size);
   for (size_t i = 0; i < tournment_global_size; ++i) {
-    tournament_global_history_table[i] = WN;
+    tournament_choice_history_table[i] = WN;
   }
 }
 
