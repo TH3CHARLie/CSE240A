@@ -40,7 +40,19 @@ uint32_t gshare_mask;
 int gshare_size;
 
 
-// TODO(xuanda): Tournament Data structures
+// Tournament data structures
+uint32_t tournament_global_history_register;
+uint32_t* tournament_global_history_table;
+uint32_t tournmanet_global_mask;
+int tournment_global_size;
+uint32_t* tournament_local_history_register;
+uint32_t tournament_local_history_mask;
+int tournament_local_history_size;
+uint32_t* tournament_local_history_table;
+int tournament_local_history_table_size;
+uint32_t* tournament_choice_history_table;
+
+
 
 // TODO(all): Custom??????????
 
@@ -67,7 +79,31 @@ void init_gshare_predictor() {
 
 
 void init_tournament_predictor() {
+  // init global
+  tournment_global_size = 1 << ghistoryBits;
+  tournmanet_global_mask = tournment_global_size - 1;
+  tournament_global_history_register = 0;
+  tournament_global_history_table = (uint32_t *)malloc(sizeof(uint32_t) * tournment_global_size);
+  for (size_t i = 0; i < tournment_global_size; ++i) {
+    tournament_global_history_table[i] = WN;
+  }
 
+  // init local
+  tournament_local_history_size = 1 << pcIndexBits;
+  tournament_local_history_mask = tournament_local_history_size - 1;
+  tournament_local_history_register = (uint32_t *)malloc(sizeof(uint32_t) * tournament_local_history_size);
+  for (size_t i = 0; i < tournament_local_history_size; ++i) {
+    tournament_local_history_register[i] = NOTTAKEN;
+  }
+  tournament_local_history_table_size = 1 << lhistoryBits;
+  tournament_local_history_table = (uint32_t *)malloc(sizeof(uint32_t) * tournament_local_history_table_size);
+  for (size_t i = 0; i < tournament_local_history_table_size; ++i) {
+    tournament_local_history_table[i] = WN;
+  }
+  tournament_choice_history_table = (uint32_t *)malloc(sizeof(uint32_t) * tournment_global_size);
+  for (size_t i = 0; i < tournment_global_size; ++i) {
+    tournament_global_history_table[i] = WN;
+  }
 }
 
 
@@ -102,17 +138,43 @@ void init_predictor() {
 uint8_t make_prediction_gshare(uint32_t pc) {
   uint32_t i = (pc ^ gshare_history_register) & gshare_mask;
   uint32_t pattern = gshare_history_table[i];
-  return pattern >> 1;
-  // if (pattern >= WT) {
-  //   return TAKEN;
-  // } else {
-  //   return NOTTAKEN;
-  // }
+  if (pattern >= WT) {
+    return TAKEN;
+  } else {
+    return NOTTAKEN;
+  }
+}
+
+uint32_t make_prediction_tournament_global(uint32_t pc) {
+  uint32_t i = tournament_global_history_register & tournmanet_global_mask;
+  uint32_t pattern = tournament_global_history_table[i];
+  if (pattern >= WT) {
+    return TAKEN;
+  } else {
+    return NOTTAKEN;
+  }
+}
+
+
+uint32_t make_prediction_tournament_local(uint32_t pc) {
+  uint32_t i = pc & tournament_local_history_mask;
+  uint32_t history_i = tournament_local_history_register[i];
+  uint32_t pattern = tournament_local_history_table[history_i];
+  if (pattern >= WT) {
+    return TAKEN;
+  } else {
+    return NOTTAKEN;
+  }
 }
 
 // TODO(xuanda):
 uint8_t make_prediction_tournament(uint32_t pc) {
-  return NOTTAKEN;
+  uint32_t choice = tournament_choice_history_table[tournament_global_history_register];
+  if (choice >= WT) {
+    return make_prediction_tournament_local(pc);
+  } else {
+    return make_prediction_tournament_global(pc);
+  }
 }
 
 // TODO(all):
@@ -163,9 +225,45 @@ void train_predictor_gshare(uint32_t pc, uint8_t outcome) {
   gshare_history_register = (gshare_history_register << 1 | outcome) & gshare_mask;
 }
 
-// TODO(xuanda):
 void train_predictor_tournament(uint32_t pc, uint8_t outcome) {
+  uint32_t global_outcome = make_prediction_tournament_global(pc);
+  uint32_t local_outcome = make_prediction_tournament_local(pc);
 
+  // update choice
+  if (global_outcome == outcome && local_outcome != outcome && tournament_choice_history_table[tournament_global_history_register] != SN) {
+    tournament_choice_history_table[tournament_global_history_register]--;
+  }
+  if (local_outcome == outcome && global_outcome != outcome && tournament_choice_history_table[tournament_global_history_register] != ST) {
+    tournament_choice_history_table[tournament_global_history_register]++;
+  }
+
+  // update global
+  if (outcome == TAKEN) {
+    if (tournament_global_history_table[tournament_global_history_register] != ST) {
+      tournament_global_history_table[tournament_global_history_register]++;
+    }
+  } else {
+    if (tournament_global_history_table[tournament_global_history_register] != SN) {
+      tournament_global_history_table[tournament_global_history_register]--;
+    }
+  }
+
+  // update local
+  uint32_t i = pc & tournament_local_history_mask;
+  uint32_t history_i = tournament_local_history_register[i];
+  if (outcome == TAKEN) {
+    if (tournament_local_history_table[history_i] != ST) {
+      tournament_local_history_table[history_i]++;
+    }
+  } else {
+    if (tournament_local_history_table[history_i] != SN) {
+      tournament_local_history_table[history_i]--;
+    }
+  }
+
+  // update registers
+  tournament_global_history_register = (tournament_global_history_register << 1 | outcome) & tournmanet_global_mask;
+  tournament_local_history_register[i] = (tournament_local_history_register[i] << 1 | outcome) & tournament_local_history_mask;
 }
 
 // TODO(all):
