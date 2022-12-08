@@ -28,6 +28,7 @@ int lhistoryBits; // Number of bits used for Local History
 int pcIndexBits;  // Number of bits used for PC index
 int bpType;       // Branch Prediction Type
 int verbose;
+int threshold;
 
 //------------------------------------//
 //      Predictor Data Structures     //
@@ -53,9 +54,9 @@ int tournament_local_history_table_size;
 uint32_t* tournament_choice_history_table;
 
 
-
-// TODO(all): Custom??????????
-
+// Custom data structures
+uint64_t custom_history_register;
+int32_t* custom_weights;
 
 //------------------------------------//
 //        Predictor Functions         //
@@ -76,7 +77,6 @@ void init_gshare_predictor() {
     gshare_history_table[i] = WN;
   }
 }
-
 
 void init_tournament_predictor() {
   // init global
@@ -106,9 +106,12 @@ void init_tournament_predictor() {
   }
 }
 
-
 void init_custom_predictor() {
-
+  custom_history_register = NOTTAKEN;
+  custom_weights = (int32_t*)malloc(sizeof(int32_t) * ghistoryBits);
+  for (size_t i = 0; i < ghistoryBits; ++i) {
+    custom_weights[i] = 0;
+  }
 }
 
 // Initialize the predictor
@@ -155,7 +158,6 @@ uint32_t make_prediction_tournament_global(uint32_t pc) {
   }
 }
 
-
 uint32_t make_prediction_tournament_local(uint32_t pc) {
   uint32_t i = pc & tournament_local_history_mask;
   uint32_t history_i = tournament_local_history_register[i];
@@ -167,7 +169,6 @@ uint32_t make_prediction_tournament_local(uint32_t pc) {
   }
 }
 
-// TODO(xuanda):
 uint8_t make_prediction_tournament(uint32_t pc) {
   uint32_t choice = tournament_choice_history_table[tournament_global_history_register];
   if (choice >= WT) {
@@ -177,9 +178,18 @@ uint8_t make_prediction_tournament(uint32_t pc) {
   }
 }
 
-// TODO(all):
 uint8_t make_prediction_custom(uint32_t pc) {
-  return NOTTAKEN;
+  int prediction = 0;
+  for (size_t i = 0; i < ghistoryBits; ++i) {
+    uint32_t bit = (custom_history_register >> i) & 1;
+    if (bit > 0) {
+      prediction += custom_weights[i];
+    }
+    else {
+      prediction -= custom_weights[i];
+    }
+  }
+  return prediction >= 0;
 }
 
 // Make a prediction for conditional branch instruction at PC 'pc'
@@ -266,9 +276,33 @@ void train_predictor_tournament(uint32_t pc, uint8_t outcome) {
   tournament_local_history_register[i] = (tournament_local_history_register[i] << 1 | outcome) & tournament_local_history_mask;
 }
 
-// TODO(all):
 void train_predictor_custom(uint32_t pc, uint8_t outcome) {
+  int prediction = 0;
+  for (size_t i = 0; i < ghistoryBits; ++i) {
+    uint32_t bit = (custom_history_register >> i) & 1;
+    if (bit > 0) {
+      prediction += custom_weights[i];
+    }
+    else {
+      prediction -= custom_weights[i];
+    }
+  }
+  
+  // train
+  if ((outcome && prediction < 0) || (!outcome && prediction >= 0) || (abs(prediction) < threshold)) {
+    for (size_t i = 0; i < ghistoryBits; ++i) {
+      uint32_t bit = (custom_history_register >> i) & 1;
+      if (bit > 0) {
+        ++custom_weights[i];
+      }
+      else {
+        --custom_weights[i];
+      }
+    }
+  }
 
+  // update history
+  custom_history_register = (custom_history_register << 1) & outcome;
 }
 
 // Train the predictor the last executed branch at PC 'pc' and with
