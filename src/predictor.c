@@ -292,7 +292,7 @@ void train_predictor_custom(uint32_t pc, uint8_t outcome) {
   if ((outcome && prediction < 0) || (!outcome && prediction >= 0) || (abs(prediction) < threshold)) {
     for (size_t i = 0; i < ghistoryBits; ++i) {
       uint32_t bit = (custom_history_register >> i) & 1;
-      if (bit > 0) {
+      if (bit == outcome) {
         ++custom_weights[i];
       }
       else {
