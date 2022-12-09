@@ -28,7 +28,6 @@ int lhistoryBits; // Number of bits used for Local History
 int pcIndexBits;  // Number of bits used for PC index
 int bpType;       // Branch Prediction Type
 int verbose;
-int weightSize;
 int threshold;
 
 //------------------------------------//
@@ -56,8 +55,9 @@ uint32_t* tournament_choice_history_table;
 
 
 // Custom data structures
-int custom_num_register;
-uint8_t* custom_history_register;
+uint64_t custom_history_register;
+int custom_weight_table_size;
+uint32_t custom_pc_index_mask;
 int32_t* custom_weights;
 
 //------------------------------------//
@@ -109,14 +109,13 @@ void init_tournament_predictor() {
 }
 
 void init_perception_predictor() {
-  threshold = (int)(1.93 * weightSize + 14);
-  custom_num_register = (weightSize + 7) / 8;
-  custom_history_register = (uint8_t*)malloc(sizeof(uint8_t) * custom_num_register);
-  for (size_t i = 0; i < custom_num_register; ++i) {
-    custom_history_register[i] = NOTTAKEN;
-  }
-  custom_weights = (int32_t*)malloc(sizeof(int32_t) * (weightSize + 1));
-  for (size_t i = 0; i < weightSize + 1; ++i) {
+  threshold = (int)(1.93 * ghistoryBits + 14);
+  custom_history_register = NOTTAKEN;
+
+  custom_weight_table_size = 1 << pcIndexBits;
+  custom_pc_index_mask = custom_weight_table_size - 1;
+  custom_weights = (int32_t*)malloc(sizeof(int32_t) * (ghistoryBits + 1) * custom_weight_table_size);
+  for (size_t i = 0; i < (ghistoryBits + 1) * custom_weight_table_size; ++i) {
     custom_weights[i] = 0;
   }
 }
@@ -140,7 +139,8 @@ void init_predictor() {
       init_tournament_predictor();
       return;
     case CUSTOM:
-      init_custom_predictor();
+      // init_custom_predictor();
+      init_perception_predictor();
       return;
     default:
       return;
@@ -192,14 +192,15 @@ uint8_t make_prediction_tournament(uint32_t pc) {
 }
 
 uint8_t make_prediction_perception(uint32_t pc) {
-  int prediction = custom_weights[weightSize];
-  for (size_t i = 0; i < weightSize; ++i) {
-    uint8_t bit = (custom_history_register[i / 8] >> (i % 8)) & 1;
+  size_t base_idx = (pc & custom_pc_index_mask) * (ghistoryBits + 1);
+  int prediction = custom_weights[base_idx + ghistoryBits];
+  for (size_t i = 0; i < ghistoryBits; ++i) {
+    uint8_t bit = (custom_history_register >> i) & 1;
     if (bit > 0) {
-      prediction += custom_weights[i];
+      prediction += custom_weights[base_idx + i];
     }
     else {
-      prediction -= custom_weights[i];
+      prediction -= custom_weights[base_idx + i];
     }
   }
   return prediction > 0;
@@ -229,7 +230,8 @@ uint8_t make_prediction(uint32_t pc) {
     case TOURNAMENT:
       return make_prediction_tournament(pc);
     case CUSTOM:
-      return make_prediction_custom(pc);
+      // return make_prediction_custom(pc);
+      return make_prediction_perception(pc);
     default:
       break;
   }
@@ -300,14 +302,15 @@ void train_predictor_tournament(uint32_t pc, uint8_t outcome) {
 }
 
 void train_predictor_perception(uint32_t pc, uint8_t outcome) {
-  int prediction = custom_weights[weightSize];
-  for (size_t i = 0; i < weightSize; ++i) {
-    uint8_t bit = (custom_history_register[i / 8] >> (i % 8)) & 1;
+  size_t base_idx = (pc & custom_pc_index_mask) * (ghistoryBits + 1);
+  int prediction = custom_weights[base_idx + ghistoryBits];
+  for (size_t i = 0; i < ghistoryBits; ++i) {
+    uint8_t bit = (custom_history_register >> i) & 1;
     if (bit > 0) {
-      prediction += custom_weights[i];
+      prediction += custom_weights[base_idx + i];
     }
     else {
-      prediction -= custom_weights[i];
+      prediction -= custom_weights[base_idx + i];
     }
   }
   uint8_t custom_outcome = prediction >= 0;
@@ -315,33 +318,24 @@ void train_predictor_perception(uint32_t pc, uint8_t outcome) {
   // train
   if ((custom_outcome != outcome) || (abs(prediction) < threshold)) {
     if (outcome == 1) {
-      ++custom_weights[weightSize];
+      ++custom_weights[base_idx + ghistoryBits];
     }
     else {
-      --custom_weights[weightSize];
+      --custom_weights[base_idx + ghistoryBits];
     }
-    for (size_t i = 0; i < weightSize; ++i) {
-      uint8_t bit = (custom_history_register[i / 8] >> (i % 8)) & 1;
+    for (size_t i = 0; i < ghistoryBits; ++i) {
+      uint8_t bit = (custom_history_register >> i) & 1;
       if (bit == outcome) {
-        ++custom_weights[i];
+        ++custom_weights[base_idx + i];
       }
       else {
-        --custom_weights[i];
+        --custom_weights[base_idx + i];
       }
     }
   }
 
   // update history
-  uint8_t mask = 1;
-  mask <<= 7;
-  uint8_t bit = custom_history_register[0] & mask << 7;
-  uint8_t new_bit;
-  custom_history_register[0] = (custom_history_register[0] << 1) | outcome;
-  for (size_t i = 1; i < custom_num_register; ++i) {
-    uint8_t new_bit = custom_history_register[i] & mask;
-    custom_history_register[i] = (custom_history_register[i] << 1) | bit;
-    bit = new_bit;
-  }
+  custom_history_register = (custom_history_register << 1) | outcome;
 }
 
 void train_predictor_custom(uint32_t pc, uint8_t outcome) {
@@ -366,7 +360,8 @@ void train_predictor(uint32_t pc, uint8_t outcome) {
       train_predictor_tournament(pc, outcome);
       return;
     case CUSTOM:
-      train_predictor_custom(pc, outcome);
+      // train_predictor_custom(pc, outcome);
+      train_predictor_perception(pc, outcome);
       return;
     default:
       return;
