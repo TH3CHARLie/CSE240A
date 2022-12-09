@@ -28,6 +28,7 @@ int lhistoryBits; // Number of bits used for Local History
 int pcIndexBits;  // Number of bits used for PC index
 int bpType;       // Branch Prediction Type
 int verbose;
+int weightSize;
 int threshold;
 
 //------------------------------------//
@@ -55,7 +56,8 @@ uint32_t* tournament_choice_history_table;
 
 
 // Custom data structures
-uint64_t custom_history_register;
+int custom_num_register;
+uint8_t* custom_history_register;
 int32_t* custom_weights;
 
 //------------------------------------//
@@ -106,12 +108,23 @@ void init_tournament_predictor() {
   }
 }
 
-void init_custom_predictor() {
-  custom_history_register = NOTTAKEN;
-  custom_weights = (int32_t*)malloc(sizeof(int32_t) * ghistoryBits);
-  for (size_t i = 0; i < ghistoryBits; ++i) {
+void init_perception_predictor() {
+  threshold = (int)(1.93 * weightSize + 14);
+  custom_num_register = (weightSize + 7) / 8;
+  custom_history_register = (uint8_t*)malloc(sizeof(uint8_t) * custom_num_register);
+  for (size_t i = 0; i < custom_num_register; ++i) {
+    custom_history_register[i] = NOTTAKEN;
+  }
+  custom_weights = (int32_t*)malloc(sizeof(int32_t) * (weightSize + 1));
+  for (size_t i = 0; i < weightSize + 1; ++i) {
     custom_weights[i] = 0;
   }
+}
+
+void init_custom_predictor() {
+  init_perception_predictor();
+  init_gshare_predictor();
+  init_tournament_predictor();
 }
 
 // Initialize the predictor
@@ -178,10 +191,10 @@ uint8_t make_prediction_tournament(uint32_t pc) {
   }
 }
 
-uint8_t make_prediction_custom(uint32_t pc) {
-  int prediction = 0;
-  for (size_t i = 0; i < ghistoryBits; ++i) {
-    uint32_t bit = (custom_history_register >> i) & 1;
+uint8_t make_prediction_perception(uint32_t pc) {
+  int prediction = custom_weights[weightSize];
+  for (size_t i = 0; i < weightSize; ++i) {
+    uint8_t bit = (custom_history_register[i / 8] >> (i % 8)) & 1;
     if (bit > 0) {
       prediction += custom_weights[i];
     }
@@ -189,7 +202,17 @@ uint8_t make_prediction_custom(uint32_t pc) {
       prediction -= custom_weights[i];
     }
   }
-  return prediction >= 0;
+  return prediction > 0;
+}
+
+uint8_t make_prediction_custom(uint32_t pc) {
+  uint8_t perception_outcome = make_prediction_perception(pc);
+  uint8_t gshare_outcome = make_prediction_gshare(pc);
+  uint8_t tournament_outcome = make_prediction_tournament(pc);
+
+  if ((perception_outcome + gshare_outcome + tournament_outcome) > 1)
+    return TAKEN;
+  else return NOTTAKEN;
 }
 
 // Make a prediction for conditional branch instruction at PC 'pc'
@@ -276,10 +299,10 @@ void train_predictor_tournament(uint32_t pc, uint8_t outcome) {
   tournament_local_history_register[i] = (tournament_local_history_register[i] << 1 | outcome) & tournament_local_history_mask;
 }
 
-void train_predictor_custom(uint32_t pc, uint8_t outcome) {
-  int prediction = 0;
-  for (size_t i = 0; i < ghistoryBits; ++i) {
-    uint32_t bit = (custom_history_register >> i) & 1;
+void train_predictor_perception(uint32_t pc, uint8_t outcome) {
+  int prediction = custom_weights[weightSize];
+  for (size_t i = 0; i < weightSize; ++i) {
+    uint8_t bit = (custom_history_register[i / 8] >> (i % 8)) & 1;
     if (bit > 0) {
       prediction += custom_weights[i];
     }
@@ -287,11 +310,18 @@ void train_predictor_custom(uint32_t pc, uint8_t outcome) {
       prediction -= custom_weights[i];
     }
   }
+  uint8_t custom_outcome = prediction >= 0;
   
   // train
-  if ((outcome && prediction < 0) || (!outcome && prediction >= 0) || (abs(prediction) < threshold)) {
-    for (size_t i = 0; i < ghistoryBits; ++i) {
-      uint32_t bit = (custom_history_register >> i) & 1;
+  if ((custom_outcome != outcome) || (abs(prediction) < threshold)) {
+    if (outcome == 1) {
+      ++custom_weights[weightSize];
+    }
+    else {
+      --custom_weights[weightSize];
+    }
+    for (size_t i = 0; i < weightSize; ++i) {
+      uint8_t bit = (custom_history_register[i / 8] >> (i % 8)) & 1;
       if (bit == outcome) {
         ++custom_weights[i];
       }
@@ -302,7 +332,22 @@ void train_predictor_custom(uint32_t pc, uint8_t outcome) {
   }
 
   // update history
-  custom_history_register = (custom_history_register << 1) & outcome;
+  uint8_t mask = 1;
+  mask <<= 7;
+  uint8_t bit = custom_history_register[0] & mask << 7;
+  uint8_t new_bit;
+  custom_history_register[0] = (custom_history_register[0] << 1) | outcome;
+  for (size_t i = 1; i < custom_num_register; ++i) {
+    uint8_t new_bit = custom_history_register[i] & mask;
+    custom_history_register[i] = (custom_history_register[i] << 1) | bit;
+    bit = new_bit;
+  }
+}
+
+void train_predictor_custom(uint32_t pc, uint8_t outcome) {
+  train_predictor_gshare(pc, outcome);
+  train_predictor_tournament(pc, outcome);
+  train_predictor_perception(pc, outcome);
 }
 
 // Train the predictor the last executed branch at PC 'pc' and with
