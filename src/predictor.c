@@ -109,7 +109,7 @@ void init_tournament_predictor() {
 }
 
 void init_perception_predictor() {
-  threshold = (int)(1.93 * ghistoryBits + 14);
+  threshold = 1.93 * ghistoryBits + 14;
   custom_history_register = NOTTAKEN;
 
   custom_weight_table_size = 1 << pcIndexBits;
@@ -313,7 +313,7 @@ void train_predictor_perception(uint32_t pc, uint8_t outcome) {
       prediction -= custom_weights[base_idx + i];
     }
   }
-  uint8_t custom_outcome = prediction >= 0;
+  uint8_t custom_outcome = prediction > 0;
   
   // train
   if ((custom_outcome != outcome) || (abs(prediction) < threshold)) {
